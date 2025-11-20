@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🌊 Морской Бой - Мультиплеер</title>
     
-    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    
     <style>
-        /* --- CSS Стили (Оставлены без изменений для краткости) --- */
+        /* --- CSS Стили (Оставлены без изменений) --- */
         :root {
             --primary: #000000;
             --secondary: #222222;
@@ -316,7 +314,7 @@
                     <button type="button" id="signin-button">Войти</button>
                     <button type="button" id="signup-button">Зарегистрироваться</button>
                 </div>
-                <p id="auth-message"></p>
+                <p id="auth-message">Загрузка Supabase...</p>
             </form>
         </section>
 
@@ -366,22 +364,54 @@
         // ИНФОРМАЦИЯ О SUPABASE
         const SUPABASE_URL = 'https://snsvzagvrzdoxaepvivt.supabase.co'; 
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuc3Z6YWd2cnpkb3hhZXB2aXZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2Mjg0NDIsImV4cCI6MjA3OTIwNDQ0Mn0.q5OATaGULNHzWmT7ccDlPNTITh7091kyxFFh8LL7ZAY';
+        const CDN_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
         
         let supabase = null;
-        
-        // ВСЕ ФУНКЦИИ И ПЕРЕМЕННЫЕ ПЕРЕНЕСЕНЫ ВНУТРЬ startMorskoyBoy, 
-        // чтобы они могли быть вызваны только после загрузки библиотеки Supabase.
-        
+        const authMessage = document.getElementById('auth-message');
+
+        // 2. Функция ДИНАМИЧЕСКОЙ ЗАГРУЗКИ (Обход кэша и блокировок)
+        function loadSupabase() {
+            authMessage.textContent = 'Загрузка библиотеки Supabase...';
+            const script = document.createElement('script');
+            script.src = CDN_URL;
+            script.defer = true;
+            
+            // Если загрузка успешна, запускаем игру
+            script.onload = () => {
+                if (typeof Supabase !== 'undefined') {
+                    authMessage.textContent = 'Библиотека Supabase загружена. Инициализация игры...';
+                    startMorskoyBoy();
+                } else {
+                    // Это сообщение появится, если файл загрузился, но Supabase не определен (очень странный сценарий)
+                    authMessage.textContent = 'Критическая ошибка: Файл загружен, но объект Supabase не определен.';
+                    authMessage.className = 'error-message';
+                }
+            };
+
+            // Если загрузка провалилась (главная причина вашей проблемы)
+            script.onerror = () => {
+                console.error('Критическая ошибка: Не удалось загрузить Supabase CDN.');
+                authMessage.textContent = 'Критическая ошибка: Supabase CDN заблокирован или недоступен. Попробуйте очистить кэш или использовать VPN.';
+                authMessage.className = 'error-message';
+            };
+
+            document.head.appendChild(script);
+        }
+
+
+        // 3. ВСЯ ИГРОВАЯ ЛОГИКА
         function startMorskoyBoy() {
-            // Здесь объект Supabase ГАРАНТИРОВАННО будет определен.
             try {
+                // Если мы дошли сюда, Supabase должен быть доступен
                 supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
             } catch (e) {
-                console.error("Критическая ошибка: Объект Supabase не определен даже после window.onload. Проверьте CDN.");
-                document.getElementById('auth-message').textContent = "Критическая ошибка: Не удалось загрузить библиотеку Supabase. Попробуйте очистить кэш.";
+                console.error("Ошибка инициализации Supabase:", e);
+                authMessage.textContent = 'Критическая ошибка: Не удалось инициализировать Supabase.';
+                authMessage.className = 'error-message';
                 return;
             }
 
+            // --- КЭШИРОВАНИЕ ЭЛЕМЕНТОВ DOM (Внутри функции) ---
             const authSection = document.getElementById('auth-section');
             const gameSection = document.getElementById('game-section');
             const currentUsernameSpan = document.getElementById('current-username');
@@ -395,7 +425,7 @@
             const startBattleButton = document.getElementById('start-battle-button');
             const signinButton = document.getElementById('signin-button');
             const signupButton = document.getElementById('signup-button');
-            const authMessage = document.getElementById('auth-message');
+            // authMessage уже определен глобально
             const usernameInput = document.getElementById('username');
             const passwordInput = document.getElementById('password');
 
@@ -436,7 +466,7 @@
                 document.getElementById('players-list-card').style.display = 'block';
             }
 
-            // --- ЛОГИКА АУТЕНТИФИКАЦИИ ---
+            // --- ЛОГИКА АУТЕНТИФИКАЦИИ (Остальная логика осталась без изменений) ---
 
             signinButton.addEventListener('click', async () => {
                 if (!supabase) return displayAuthMessage('Идет загрузка... Попробуйте через секунду.', false);
@@ -996,17 +1026,9 @@
                 }
             }
         }
-    </script>
-    
-    <script>
-        // Этот скрипт гарантирует, что startMorskoyBoy() будет вызван только после 
-        // успешной загрузки ВСЕХ внешних скриптов (включая Supabase).
-        window.onload = startMorskoyBoy; 
-        
-        // Дополнительная проверка на случай, если window.onload не сработает (хотя это маловероятно)
-        if (document.readyState === 'complete') {
-            startMorskoyBoy();
-        }
+
+        // 4. Запуск загрузчика после полной загрузки DOM (самый ранний момент)
+        document.addEventListener('DOMContentLoaded', loadSupabase);
     </script>
 </body>
 </html>
