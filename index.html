@@ -398,7 +398,6 @@
         const authMessage = document.getElementById('auth-message');
         
         // --- ГАРАНТИРУЕМ ИНИЦИАЛИЗАЦИЮ ---
-        // window.supabase должен быть доступен здесь благодаря тегу <script> выше.
         try {
             supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
             authMessage.textContent = 'Библиотека Supabase загружена. Инициализация игры...';
@@ -430,7 +429,7 @@
             const passwordInput = document.getElementById('password');
             const randomPlacementButton = document.getElementById('random-placement-button');
             
-            // НОВЫЙ КЭШ ДЛЯ КАРТОЧКИ ВОЗВРАТА
+            // КАРТОЧКА ДЛЯ КНОПКИ ВОЗВРАТА
             const returnToGameCard = document.getElementById('return-to-game-card');
             const returnToGameButton = document.getElementById('return-to-game-button');
             
@@ -449,7 +448,6 @@
             
             // --- ОБРАБОТЧИКИ КНОПОК ---
             randomPlacementButton.addEventListener('click', placeShipsRandomly);
-            // ПРИКРЕПЛЯЕМ ОБРАБОТЧИК К НОВОЙ КНОПКЕ
             returnToGameButton.addEventListener('click', () => checkAndResumeGame(true));
             
             logoutButton.addEventListener('click', async () => {
@@ -471,7 +469,6 @@
                 activeGameInfo.style.display = 'none';
                 currentUserData = { id: null, username: null, gameId: null };
                 myShipPlacement = [];
-                // СКРЫВАЕМ КАРТОЧКУ
                 returnToGameCard.style.display = 'none'; 
                 
                 displayAuthMessage('Вы вышли из системы.', true);
@@ -623,7 +620,6 @@
                 for (const key in state) {
                     const player = state[key][0]; 
                     // Не показываем себя и игроков в активной игре (у кого есть gameId)
-                    // Важно: если игрок в игре, его gameId будет в presence.
                     if (player.user_id !== currentUserId && !player.gameId) {
                         players.push(player);
                     }
@@ -667,14 +663,15 @@
                 }
                 
                 // RPC-ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ИГРЫ (ОБХОД RLS INSERT)
+                // Ошибки "Критическая ошибка создания игры" решаются
+                // с помощью SECURITY DEFINER на RPC-функции в Supabase.
                 const { data: game, error: gameError } = await supabase
                     .rpc('create_new_game')
                     .single(); 
                 
                 if (gameError) {
                     console.error('Ошибка создания игры через RPC:', gameError.message);
-                    // УВЕДОМЛЕНИЕ ОБ ОШИБКЕ RLS
-                    alert('Ошибка создания игры в базе данных.' || 'Критическая ошибка создания игры: Проверьте RLS для INSERT на таблице GAMES.');
+                    alert('Критическая ошибка создания игры: Проверьте RLS для INSERT на таблице GAMES (функция RPC)');
                     return;
                 }
                 
@@ -715,13 +712,25 @@
                 currentUserData.gameId = gameId;
                 
                 // 1. ПОЛУЧАЕМ ID ИГРОКА 1
-                const { data: initialGame } = await supabase.from('games').select('player1_id').eq('id', gameId).single();
+                // Требуется RLS SELECT, иначе ошибка 406 и TypeError
+                const { data: initialGame, error: selectError } = await supabase
+                    .from('games')
+                    .select('player1_id')
+                    .eq('id', gameId)
+                    .single();
 
+                if (selectError || initialGame === null) {
+                    console.error('Ошибка SELECT при присоединении:', selectError || 'Игра не найдена или RLS SELECT заблокирован.');
+                    currentUserData.gameId = null; 
+                    return alert('Не удалось найти игру или получить данные (Ошибка RLS SELECT).');
+                }
+
+                // Теперь initialGame точно не null
                 const firstTurnId = Math.random() < 0.5 ? initialGame.player1_id : currentUserData.id;
 
                 // 2. ОБНОВЛЯЕМ ИГРУ - ИГРОК 2
-                // УБИРАЕМ .single(), чтобы избежать ошибки "The result contains 0 rows"
-                const { data: updatedGame, error } = await supabase
+                // Требуется RLS UPDATE БЕЗ WITH CHECK (current_turn)
+                const { data: updatedGame, error: updateError } = await supabase
                     .from('games')
                     .update({ 
                         player2_id: currentUserData.id,
@@ -729,10 +738,10 @@
                         current_turn: firstTurnId 
                     })
                     .eq('id', gameId)
-                    .select(); // <--- ИСПРАВЛЕНИЕ: БЕЗ .single()
+                    .select(); // <--- ИСПРАВЛЕНИЕ: Удалено .single() для надежности
 
-                if (error || !updatedGame || updatedGame.length === 0) {
-                    console.error('Ошибка присоединения к игре (UPDATE RLS):', error || 'Обновление не вернуло строк.');
+                if (updateError || !updatedGame || updatedGame.length === 0) {
+                    console.error('Ошибка присоединения к игре (UPDATE RLS):', updateError || 'Обновление не вернуло строк.');
                     currentUserData.gameId = null; // Сбросить gameId, так как присоединение не удалось
                     return alert('Не удалось присоединиться к игре. (Ошибка RLS UPDATE на games)');
                 }
@@ -801,7 +810,7 @@
                         allCells.splice(randomIndex, 1); 
                         attempts = 0; // Сбрасываем счетчик, так как нашли место
                     } else {
-                        attempts++; // Не сбрасываем, если не нашли место
+                        attempts++; 
                     }
                     if (allCells.length === 0) break;
                 }
@@ -1064,6 +1073,7 @@
                 updateObject[targetPlayerField] = updatedBoardData;
                 
                 // Передача хода, если это промах
+                // Здесь сработает RLS UPDATE с WITH CHECK (current_turn)
                 updateObject.current_turn = isHit ? currentUserData.id : opponentId; 
 
                 const { error } = await supabase
@@ -1118,7 +1128,7 @@
                 }
             }
             
-            // --- ЛОГИКА ВОЗВРАТА В ИГРУ (ИСПРАВЛЕНА) ---
+            // --- ЛОГИКА ВОЗВРАТА В ИГРУ ---
 
             async function getUsernameById(userId) {
                 if (!userId) return 'Ожидание...';
@@ -1139,12 +1149,9 @@
             }
 
             async function checkAndResumeGame(clicked) {
-                // Если вызвано кликом, сбрасываем gameId в данных, чтобы начать поиск
                 if (clicked) {
-                    // Скрываем лобби и карточку "Вернуться" на время загрузки
                     document.getElementById('players-list-card').style.display = 'none';
                     returnToGameCard.style.display = 'none'; 
-                    // Немедленно показываем загрузку в инфо-карточке
                     activeGameInfo.style.display = 'block';
                     document.getElementById('game-status-display').textContent = 'Загрузка игры...';
                 }
@@ -1160,7 +1167,6 @@
                     const opponentName = await getUsernameById(opponentId);
                         
                     if (clicked) {
-                        // Если нажали кнопку, немедленно запускаем игру
                         startGame(activeGame, opponentName);
                     } else {
                         // Если просто проверка после входа (clicked=false)
@@ -1190,7 +1196,7 @@
                         .from('profiles')
                         .select('username')
                         .eq('id', user.id)
-                        .maybeSingle(); // Используем maybeSingle для надежности
+                        .maybeSingle(); 
 
                     if (!profile) {
                         await supabase.auth.signOut();
