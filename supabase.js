@@ -1,6 +1,8 @@
 // --- КОНФИГУРАЦИЯ SUPABASE ---
-const SUPABASE_URL = 'https://snsvzagvrzdoxaepvivt.supabase.co'; // <--- ЗАМЕНИТЕ НА ВАШ URL
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuc3Z6YWd2cnpkb3hhZXB2aXZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2Mjg0NDIsImV4cCI6MjA3OTIwNDQ0Mn0.q5OATaGULNHzWmT7ccDlPNTITh7091kyxFFh8LL7ZAY'; // <--- ЗАМЕНИТЕ НА ВАШ ANON KEY
+// !!! ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ НА ВАШИ АКТУАЛЬНЫЕ КЛЮЧИ !!!
+const SUPABASE_URL = 'https://snsvzagvrzdoxaepvivt.supabase.co'; 
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuc3Z6YWd2cnpkb3hhZXB2aXZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2Mjg0NDIsImV4cCI6MjA3OTIwNDQ0Mn0.q5OATaGULNHzWmT7ccDlPNTITh7091kyxFFh8LL7ZAY';
+// !!! НЕ ЗАБУДЬТЕ ЗАМЕНИТЬ !!!
 
 // --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
 let supabase = null;
@@ -30,7 +32,6 @@ async function handleAuth(type) {
     const passwordInput = document.getElementById('password');
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
-    const authMessage = document.getElementById('auth-message');
     
     if (!username || !password) return displayAuthMessage('Введите имя и пароль.', false);
 
@@ -261,6 +262,26 @@ window.sendChallenge = sendChallenge;
 window.joinGame = joinGame;
 window.setupGameChannel = setupGameChannel;
 window.getActiveGame = getActiveGame;
+
+// Функции-обертки для DOM, используемые в game.js
+function displayAuthMessage(message, isSuccess = true) {
+    const authMessage = document.getElementById('auth-message');
+    authMessage.textContent = message;
+    authMessage.className = isSuccess ? 'success-message' : 'error-message';
+    setTimeout(() => {
+        authMessage.textContent = '';
+        authMessage.className = '';
+    }, 5000);
+}
+
+function updateUI(user, username) {
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('game-section').style.display = 'block';
+    document.getElementById('current-username').textContent = username;
+    document.getElementById('current-user-id').textContent = user.id.substring(0, 8) + '...';
+    document.getElementById('players-list-card').style.display = 'block';
+}
+
 window.displayAuthMessage = displayAuthMessage;
 window.updateUI = updateUI;
 window.setupPresence = setupPresence;
