@@ -1,10 +1,6 @@
-// =========================================================================
-// ОСНОВНОЙ КОНТЕЙНЕР КОДА (IIFE ДЛЯ ИЗОЛЯЦИИ ПЕРЕМЕННЫХ И ИЗБЕЖАНИЯ CONFLICTS)
-// =========================================================================
 (function() {
     "use strict";
 
-    // ИСПРАВЛЕНИЕ ОШИБКИ 'presenceChannel has already been declared'
     var presenceChannel = null;
     var gameChannel = null;
     var current_game = null;
@@ -21,7 +17,6 @@
         { size: 1, count: 4, name: "Катер" }
     ];
 
-    // DOM элементы
     const authSection = document.getElementById('auth-section');
     const gameSection = document.getElementById('game-section');
     const myBoardElement = document.getElementById('my-board');
@@ -35,57 +30,84 @@
     const activeGameInfo = document.getElementById('active-game-info');
     const gameFinishCard = document.getElementById('game-finish-card');
     const randomPlacementButton = document.getElementById('random-placement-button');
+    const authMessage = document.getElementById('auth-message'); 
 
-
-    // =========================================================================
-    // 1. АУТЕНТИФИКАЦИЯ
-    // =========================================================================
-
-    document.getElementById('signin-button').addEventListener('click', () => handleAuth(true));
-    document.getElementById('signup-button').addEventListener('click', () => handleAuth(false));
+    document.getElementById('signin-button').addEventListener('click', handleSignIn);
+    document.getElementById('signup-button').addEventListener('click', handleSignUp);
     document.getElementById('logout-button').addEventListener('click', logout);
     document.getElementById('back-to-lobby-button').addEventListener('click', showLobby);
     if (randomPlacementButton) randomPlacementButton.addEventListener('click', placeShipsRandomly);
 
 
-    async function handleAuth(isSignIn) {
+    async function handleSignIn() {
         const username = document.getElementById('username').value.trim();
         const password = document.getElementById('password').value;
-        const authMessage = document.getElementById('auth-message');
 
         if (!username || !password) {
-            authMessage.textContent = "Введите имя и пароль.";
+            authMessage.textContent = "Введите имя и пароль для входа.";
             return;
         }
 
-        try {
-            let response;
-            // !!! КРИТИЧЕСКИЙ МОМЕНТ: Supabase Auth требует email
-            const email = `${username}@battleship.com`; 
-            
-            if (isSignIn) {
-                response = await supabase.auth.signInWithPassword({ email, password });
-            } else {
-                response = await supabase.auth.signUp({ 
-                    email, 
-                    password, 
-                    options: { 
-                        data: { username: username }
-                    } 
-                });
-            }
+        const email = `${username}@battleship.com`; 
 
-            if (response.error) {
-                throw response.error;
-            }
+        try {
+            authMessage.textContent = 'Попытка входа...';
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+            if (error) throw error;
 
             authMessage.textContent = 'Успешный вход!';
-            initializeUser(response.data.user);
+            initializeUser(data.user);
 
         } catch (error) {
-            // Исправленная ошибка: Invalid login credentials
-            authMessage.textContent = `Ошибка ${isSignIn ? 'входа' : 'регистрации'}: ${error.message}. Проверьте введенные данные и настройки Supabase.`;
-            console.error("Auth Error:", error);
+            let displayMessage = `Ошибка входа: ${error.message}.`;
+            if (error.status === 400 && error.message === 'Invalid login credentials') {
+                 displayMessage = 'Ошибка входа: Неверное имя пользователя или пароль. Проверьте введенные данные.';
+            } else {
+                 displayMessage += ' Проверьте ключи и настройки Supabase.';
+            }
+            authMessage.textContent = displayMessage;
+            console.error("Auth Error (Sign In):", error);
+        }
+    }
+
+    async function handleSignUp() {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+
+        if (!username || !password) {
+            authMessage.textContent = "Введите имя и пароль для регистрации.";
+            return;
+        }
+        
+        const email = `${username}@battleship.com`; 
+
+        try {
+            authMessage.textContent = 'Попытка регистрации...';
+            const { data, error } = await supabase.auth.signUp({ 
+                email, 
+                password, 
+                options: { 
+                    data: { username: username } 
+                } 
+            });
+
+            if (error) throw error;
+            
+            if (data.user && data.user.aud === 'authenticated') {
+                 authMessage.textContent = 'Регистрация успешна! Вы вошли в систему.';
+                 initializeUser(data.user);
+            } else if (data.session === null) {
+                 authMessage.textContent = 'Регистрация успешна. Проверьте почту для подтверждения (если включено).';
+            } else {
+                 authMessage.textContent = 'Регистрация успешна! Вы вошли в систему.';
+                 initializeUser(data.user);
+            }
+
+        } catch (error) {
+            let displayMessage = `Ошибка регистрации: ${error.message}.`;
+            authMessage.textContent = displayMessage;
+            console.error("Auth Error (Sign Up):", error);
         }
     }
 
@@ -99,7 +121,6 @@
         }
 
         window.myUserId = user.id;
-        // Используем 'username' из user_metadata, если доступно
         window.myUsername = user.user_metadata?.username || user.email.split('@')[0]; 
 
         document.getElementById('current-username').textContent = window.myUsername;
@@ -124,7 +145,6 @@
         initializeUser(null);
     }
 
-    // Загрузка пользователя при старте
     supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
             initializeUser(session.user);
@@ -133,36 +153,24 @@
         }
     });
 
-
-    // =========================================================================
-    // 2. УПРАВЛЕНИЕ ИГРОКАМИ И ПРИСУТСТВИЕМ (PRESENCE)
-    // =========================================================================
-
     function subscribeToPresence() {
-        if (presenceChannel) {
-            supabase.removeChannel(presenceChannel);
-        }
+        if (presenceChannel) supabase.removeChannel(presenceChannel);
         
         presenceChannel = supabase.channel('online_players', {
-            config: {
-                presence: {
-                    key: window.myUserId 
-                }
-            }
+            config: { presence: { key: window.myUserId } }
         });
 
         presenceChannel
             .on('presence', { event: 'sync' }, () => {
                 const state = presenceChannel.presenceState();
                 const players = Object.keys(state)
-                    .filter(id => id !== window.myUserId) // Фильтр по ID
+                    .filter(id => id !== window.myUserId)
                     .map(id => state[id][0].username);
 
                 updatePlayersList(players);
             })
             .subscribe(async (status) => {
                 if (status === 'SUBSCRIBED') {
-                    // Важно: track() должен быть после подписки
                     await presenceChannel.track({ username: window.myUsername }); 
                 }
             });
@@ -191,13 +199,7 @@
         });
     }
 
-
-    // =========================================================================
-    // 3. УПРАВЛЕНИЕ ИГРОЙ И REALTIME
-    // =========================================================================
-
     async function checkActiveGame() {
-        // Проверяем наличие активной игры (статусы 'lobby', 'placement', 'battle')
         const { data, error } = await supabase
             .from('games')
             .select('*')
@@ -206,9 +208,8 @@
             .limit(1)
             .single();
 
-        // PGRST116: The result contains 0 rows (т.е. нет активной игры)
         if (error && error.code !== 'PGRST116') {
-            console.error("Ошибка проверки активной игры (RLS SELECT?):", error); //
+            console.error("Ошибка проверки активной игры (RLS SELECT?):", error);
             return;
         }
 
@@ -220,10 +221,9 @@
         }
     }
 
-    // Создание игры (вызов)
     async function createGame(opponentName) {
         const { data: opponentData } = await supabase
-            .from('users') // Таблица 'users' или 'auth.users' + public.user_profiles
+            .from('users')
             .select('id')
             .eq('raw_user_meta_data->>username', opponentName)
             .limit(1);
@@ -238,7 +238,7 @@
             .from('games')
             .insert({
                 player1_id: window.myUserId,
-                player1_name: window.myUsername, // Проверить существование колонки player1_name!
+                player1_name: window.myUsername,
                 player2_id: opponentId,
                 player2_name: opponentName,
                 status: 'lobby',
@@ -248,7 +248,6 @@
             .single();
 
         if (createError) {
-            // Ошибка RLS INSERT или отсутсвие колонок
             alert(`Ошибка при создании игры. Проверьте RLS INSERT или наличие колонок: ${createError.message}`); 
             console.error("Ошибка создания игры:", createError);
             return;
@@ -257,9 +256,7 @@
         joinGame(game.id);
     }
 
-    // Присоединение к игре / Запуск Realtime
     async function joinGame(gameId) {
-        // ПЕРЕМЕНА: Убираем .single() для лучшей совместимости с RLS (используем .limit(1)[0])
         const { data, error } = await supabase
             .from('games')
             .select('*')
@@ -267,7 +264,6 @@
             .limit(1);
 
         if (error || !data || data.length === 0) {
-            // Ошибка RLS SELECT
             alert("Не удалось найти игру или получить данные (Ошибка RLS SELECT)."); 
             console.error("Ошибка SELECT при присоединении:", error || { message: "Игра не найдена." });
             return;
@@ -279,9 +275,7 @@
 
         showGameUI();
         
-        if (gameChannel) {
-            await supabase.removeChannel(gameChannel);
-        }
+        if (gameChannel) await supabase.removeChannel(gameChannel);
 
         gameChannel = supabase.channel(`game_${gameId}`);
         
@@ -298,15 +292,13 @@
     }
 
     function showLobby() {
-        // Логика возврата в лобби
         boardsContainer.style.display = 'none';
         activeGameInfo.style.display = 'none';
         playersListCard.style.display = 'block';
         gameFinishCard.style.display = 'none';
         
-        if (gameChannel) {
-            supabase.removeChannel(gameChannel);
-        }
+        if (gameChannel) supabase.removeChannel(gameChannel);
+        
         current_game = null;
         myBoardElement.innerHTML = '';
         opponentBoardElement.innerHTML = '';
@@ -317,7 +309,6 @@
 
 
     function showGameUI() {
-        // Логика отображения игрового интерфейса
         playersListCard.style.display = 'none';
         document.getElementById('return-to-game-card').style.display = 'none';
         gameFinishCard.style.display = 'none';
@@ -335,7 +326,6 @@
     }
 
     function updateGameUI(game) {
-        // Логика обновления интерфейса в зависимости от статуса игры
         document.getElementById('game-status-display').textContent = game.status;
         const opponentBoardData = isPlayer1 ? game.player2_board : game.player1_board;
         const myBoardData = isPlayer1 ? game.player1_board : game.player2_board;
@@ -396,12 +386,7 @@
     }
 
 
-    // =========================================================================
-    // 4. ЛОГИКА ИГРЫ (ДОСКИ, ВЫСТРЕЛЫ)
-    // =========================================================================
-
     function initializeBoard(boardElement, isMyBoard) {
-        // Логика инициализации доски
         boardElement.innerHTML = '';
         const letters = [' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
         for (let i = 0; i <= BOARD_SIZE; i++) {
@@ -409,9 +394,8 @@
                 const cell = document.createElement('div');
                 cell.className = 'cell';
                 
-                if (i === 0 && j === 0) {
-                    cell.className = 'cell coord';
-                } else if (i === 0) {
+                if (i === 0 && j === 0) cell.className = 'cell coord';
+                else if (i === 0) {
                     cell.textContent = letters[j];
                     cell.className = 'cell coord';
                 } else if (j === 0) {
@@ -420,9 +404,7 @@
                 } else {
                     cell.dataset.row = i;
                     cell.dataset.col = j;
-                    if (!isMyBoard) {
-                        cell.addEventListener('click', handleShot);
-                    }
+                    if (!isMyBoard) cell.addEventListener('click', handleShot);
                 }
                 boardElement.appendChild(cell);
             }
@@ -431,7 +413,6 @@
 
 
     function updateBoardDisplay(boardElement, boardData, isMyBoard) {
-        // Логика обновления отображения доски
         if (!boardData) return;
 
         boardElement.querySelectorAll('.ship-overlay').forEach(el => el.remove());
@@ -444,62 +425,39 @@
                 if (!cell) continue;
 
                 cell.className = 'cell'; 
-
                 const cellState = boardData[i][j];
 
-                // 1. Отображение кораблей 
                 if (isMyBoard) {
-                    if (cellState.ship && !cellState.hit) {
-                        cell.classList.add('cell-ship-placed');
-                    }
-                    if (cellState.ship && cellState.hit) {
-                        cell.classList.add('hit-ship');
-                    }
+                    if (cellState.ship && !cellState.hit) cell.classList.add('cell-ship-placed');
+                    if (cellState.ship && cellState.hit) cell.classList.add('hit-ship');
                 }
 
-                // 2. Отображение попаданий/промахов
-                if (cellState.hit) {
-                    cell.classList.add('hit');
-                } else if (cellState.miss) {
-                    cell.classList.add('miss');
-                }
+                if (cellState.hit) cell.classList.add('hit');
+                else if (cellState.miss) cell.classList.add('miss');
 
-                // 3. Маркер последнего выстрела
-                if (cellState.lastBomb) {
-                    cell.classList.add('last-bomb');
-                } else {
-                    cell.classList.remove('last-bomb');
-                }
+                if (cellState.lastBomb) cell.classList.add('last-bomb');
+                else cell.classList.remove('last-bomb');
                 
-                // 4. Блокировка/разблокировка выстрелов
                 if (!isMyBoard) {
                     const isFired = cellState.hit || cellState.miss;
                     const isMyTurn = current_game.current_turn === window.myUserId;
                     
-                    if (isFired || !isMyTurn || current_game.status !== 'battle') {
-                        cell.classList.add('disabled');
-                    } else {
-                        cell.classList.remove('disabled');
-                    }
+                    if (isFired || !isMyTurn || current_game.status !== 'battle') cell.classList.add('disabled');
+                    else cell.classList.remove('disabled');
                 }
             }
         }
     }
 
 
-    // Обработка выстрела
     async function handleShot(event) {
-        if (placementMode || current_game.status !== 'battle' || current_game.current_turn !== window.myUserId) {
-            return;
-        }
+        if (placementMode || current_game.status !== 'battle' || current_game.current_turn !== window.myUserId) return;
 
         const cell = event.currentTarget;
         const row = parseInt(cell.dataset.row);
         const col = parseInt(cell.dataset.col);
 
-        if (cell.classList.contains('disabled')) {
-            return;
-        }
+        if (cell.classList.contains('disabled')) return;
 
         const opponentBoardKey = isPlayer1 ? 'player2_board' : 'player1_board';
         const myBoardKey = isPlayer1 ? 'player1_board' : 'player2_board';
@@ -529,9 +487,7 @@
 
         } else if (!targetCell.ship && !targetCell.miss) {
             targetCell.miss = true;
-        } else {
-            return;
-        }
+        } else return;
         
         const nextTurnId = isHit ? window.myUserId : current_game[opponentIdKey];
         
@@ -557,33 +513,22 @@
     function checkWin(board) {
         for (let i = 1; i <= BOARD_SIZE; i++) {
             for (let j = 1; j <= BOARD_SIZE; j++) {
-                const cell = board[i][j];
-                if (cell.ship && !cell.hit) {
-                    return false;
-                }
+                if (board[i][j].ship && !board[i][j].hit) return false;
             }
         }
         return true;
     }
 
     function resetLastBomb(board) {
-        // Логика сброса маркера последнего выстрела
         for (let i = 1; i <= BOARD_SIZE; i++) {
             for (let j = 1; j <= BOARD_SIZE; j++) {
-                if (board[i][j].lastBomb) {
-                    board[i][j].lastBomb = false;
-                }
+                if (board[i][j].lastBomb) board[i][j].lastBomb = false;
             }
         }
     }
 
 
-    // =========================================================================
-    // 5. РАССТАНОВКА КОРАБЛЕЙ (PLACEMENT)
-    // =========================================================================
-
     function renderShipList() {
-        // Логика отображения списка кораблей для перетаскивания
         const list = document.getElementById('ship-list');
         if (!list) return;
 
@@ -609,7 +554,7 @@
                 rotateBtn.className = 'challenge-button rotate-btn';
                 rotateBtn.onclick = (e) => {
                     e.preventDefault();
-                    e.stopPropagation(); // Остановить, чтобы не сработал dragstart
+                    e.stopPropagation();
                     shipDiv.dataset.orientation = shipDiv.dataset.orientation === 'horizontal' ? 'vertical' : 'horizontal';
                     shipDiv.classList.toggle('rotated');
                 };
@@ -632,7 +577,6 @@
     }
 
     function generateInitialBoardGrid() {
-        // Создание пустой доски
         boardGrid = [];
         for (let i = 0; i <= BOARD_SIZE; i++) {
             boardGrid[i] = [];
@@ -651,7 +595,6 @@
             ship.addEventListener('dragstart', (e) => {
                 e.dataTransfer.setData('text/plain', ship.dataset.id);
                 ship.classList.add('is-dragging');
-                // Добавляем класс ко всем ячейкам для подсветки
                 myBoardElement.classList.add('drag-active');
             });
 
@@ -686,14 +629,9 @@
 
         if (checkPlacementValidity(row, col, size, orientation, true)) { 
             removeShipFromGrid(shipId);
-
             addShipToGrid(shipId, row, col, size, orientation);
             
             shipElement.parentElement.classList.add('ship-placed'); 
-            
-            // Визуальное перемещение корабля с левого поля (опционально, но помогает)
-            // Если вы хотите, чтобы корабль исчезал из списка, добавьте:
-            // shipElement.parentElement.style.display = 'none'; 
             
             updateBoardDisplay(myBoardElement, boardGrid, true);
             checkAllShipsPlaced();
@@ -710,20 +648,17 @@
     function checkPlacementValidity(startRow, startCol, size, orientation, checkBuffer = false) {
         let cellsToCheck = [];
         
-        // 1. Проверка границ и наложения
         for (let k = 0; k < size; k++) {
             let r = orientation === 'horizontal' ? startRow : startRow + k;
             let c = orientation === 'horizontal' ? startCol + k : startCol;
 
             if (r < 1 || r > BOARD_SIZE || c < 1 || c > BOARD_SIZE) return false;
             
-            // Проверка наложения на существующий корабль, который НЕ является перемещаемым
             if (boardGrid[r][c].ship && !myShips.some(s => s.id === document.querySelector('.draggable-ship.is-dragging')?.dataset.id)) return false; 
             
             cellsToCheck.push({ r, c });
         }
         
-        // 2. Проверка буфера (отступов)
         if (checkBuffer) {
             for (const { r, c } of cellsToCheck) {
                 for (let dr = -1; dr <= 1; dr++) {
@@ -735,10 +670,7 @@
                             if (dr === 0 && dc === 0) continue; 
                             
                             if (boardGrid[adjR][adjC].ship) {
-                                // Если соседняя клетка занята, но не является частью текущего перемещаемого корабля
-                                if (!cellsToCheck.some(cell => cell.r === adjR && cell.c === adjC)) {
-                                    return false; 
-                                }
+                                if (!cellsToCheck.some(cell => cell.r === adjR && cell.c === adjC)) return false; 
                             }
                         }
                     }
@@ -752,7 +684,6 @@
 
     function addShipToGrid(shipId, startRow, startCol, size, orientation) {
         myShips = myShips.filter(s => s.id !== shipId);
-
         myShips.push({ id: shipId, size: size, row: startRow, col: startCol, orientation: orientation });
         
         if (orientation === 'horizontal') {
@@ -778,15 +709,11 @@
 
         if (orientation === 'horizontal') {
             for (let j = col; j < col + size; j++) {
-                 if (row >= 1 && row <= BOARD_SIZE && j >= 1 && j <= BOARD_SIZE) {
-                    boardGrid[row][j].ship = false;
-                 }
+                 if (row >= 1 && row <= BOARD_SIZE && j >= 1 && j <= BOARD_SIZE) boardGrid[row][j].ship = false;
             }
         } else {
             for (let i = row; i < row + size; i++) {
-                 if (i >= 1 && i <= BOARD_SIZE && col >= 1 && col <= BOARD_SIZE) {
-                    boardGrid[i][col].ship = false;
-                 }
+                 if (i >= 1 && i <= BOARD_SIZE && col >= 1 && col <= BOARD_SIZE) boardGrid[i][col].ship = false;
             }
         }
 
@@ -794,7 +721,6 @@
     }
     
     function placeShipsRandomly() {
-        // Логика рандомной расстановки
         generateInitialBoardGrid();
         myShips = [];
         
@@ -826,7 +752,6 @@
             }
         });
         
-        // Обновление UI
         document.querySelectorAll('.draggable-ship-wrapper').forEach(el => el.classList.add('ship-placed'));
         updateBoardDisplay(myBoardElement, boardGrid, true);
         checkAllShipsPlaced();
@@ -846,7 +771,6 @@
         }
     }
 
-    // Функции для превью размещения
     function handleDragOver(e) { e.preventDefault(); }
     function handleDragLeave(e) { clearPlacementPreview(); }
 
@@ -865,10 +789,7 @@
         showPlacementPreview(row, col, size, orientation);
     }
 
-    function handleMouseLeave(e) {
-        // Очистку по mouseleave делаем только при dragleave или drop
-        // или когда уходит курсор, если нет активного drag
-    }
+    function handleMouseLeave(e) {}
 
     function showPlacementPreview(startRow, startCol, size, orientation) {
         clearPlacementPreview();
@@ -893,7 +814,6 @@
     }
 
 
-    // Обработка кнопки "ГОТОВ! 🚢"
     startBattleButton.addEventListener('click', async () => {
         if (startBattleButton.disabled) return;
         
@@ -910,12 +830,10 @@
         const opponentBoardData = current_game[opponentBoardKey];
         
         if (opponentBoardData !== null && current_game.status === 'placement' || current_game.status === 'lobby') {
-            // Оба готовы. Player1 всегда начинает.
             updateObject.status = 'battle';
             updateObject.current_turn = current_game.player1_id; 
             console.log("Оба игрока готовы. Устанавливаем статус 'battle'.");
         } else if (current_game.status === 'lobby') {
-             // Сохраняем расстановку, но ждём соперника
              updateObject.status = 'placement';
         }
         
@@ -925,7 +843,6 @@
             .eq('id', current_game.id);
 
         if (error) {
-            // Ошибка RLS UPDATE при сохранении расстановки
             alert("Ошибка при сохранении расстановки. Проверьте RLS UPDATE."); 
             console.error("Ошибка finishPlacement (RLS UPDATE):", error);
         } else {
@@ -933,10 +850,6 @@
         }
     });
 
-
-    // =========================================================================
-    // 6. ЗАВЕРШЕНИЕ ИГРЫ И ВОЗВРАТ В ЛОББИ
-    // =========================================================================
 
     function handleGameFinished(game) {
         boardsContainer.style.display = 'none';
@@ -979,4 +892,4 @@
         }
     });
     
-})(); // Конец IIFE
+})();
