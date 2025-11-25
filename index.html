@@ -402,12 +402,12 @@
         // ИНФОРМАЦИЯ О SUPABASE
         const SUPABASE_URL = 'https://snsvzagvrzdoxaepvivt.supabase.co'; 
         // ВАШ АКТУАЛЬНЫЙ ANON KEY
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuc3Z6YWd2cnpkb3hhZXB2aXZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2Mjg0NDIsImV4cCI6MjA3OTIwNDQ0Mn0.q5OATaGULNHzWmT7ccDlFPNITh7091kyxFFh8LL7ZAY';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuc3Z6YWd2cnpkb3hhZXB2aXZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2Mjg0NDIsImV4cCI6MjA3OTIwNDQ0Mn0.q5OATaGULNHzWmT7ccDlPNTITh7091kyxFFh8LL7ZAY';
         
         let supabase = null;
         const authMessage = document.getElementById('auth-message');
         
-        // --- ГАРАНТИРУЕМ ИНИЦИАЛИЗАЦИЮ ---
+        // --- ГАРАНТИРУЕМ ИНИЦИАЛИЗАЦИЮ (Исправление ReferenceError) ---
         try {
             // Инициализация клиента Supabase
             supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -439,7 +439,7 @@
             const usernameInput = document.getElementById('username');
             const passwordInput = document.getElementById('password');
             const randomPlacementButton = document.getElementById('random-placement-button');
-            const endGameButton = document.getElementById('end-game-button'); // НОВАЯ КНОПКА
+            const endGameButton = document.getElementById('end-game-button'); 
             
             // КАРТОЧКА ДЛЯ КНОПКИ ВОЗВРАТА
             const returnToGameCard = document.getElementById('return-to-game-card');
@@ -461,7 +461,7 @@
             // --- ОБРАБОТЧИКИ КНОПОК ---
             randomPlacementButton.addEventListener('click', placeShipsRandomly);
             returnToGameButton.addEventListener('click', () => checkAndResumeGame(true));
-            endGameButton.addEventListener('click', endGameAndLobby); // НОВЫЙ ОБРАБОТЧИК
+            endGameButton.addEventListener('click', endGameAndLobby); 
             
             logoutButton.addEventListener('click', async () => {
                 await cleanUpSession();
@@ -472,28 +472,32 @@
                 displayAuthMessage('Вы вышли из системы.', true);
             });
             
-            // --- НОВАЯ ФУНКЦИЯ ОЧИСТКИ СОСТОЯНИЯ ---
+            // --- ФУНКЦИЯ ОЧИСТКИ СОСТОЯНИЯ ---
             async function cleanUpSession() {
                 if (gameChannel) {
                     supabase.removeChannel(gameChannel);
                     gameChannel = null;
                 }
                 if (presenceChannel) {
-                    await presenceChannel.untrack();
-                    supabase.removeChannel(presenceChannel);
+                    try {
+                        await presenceChannel.untrack();
+                        supabase.removeChannel(presenceChannel);
+                    } catch (e) {
+                         // Игнорируем ошибки
+                    }
                     presenceChannel = null;
                 }
                 
                 // Сброс UI и данных
                 boardsContainer.style.display = 'none';
                 activeGameInfo.style.display = 'none';
-                currentUserData = { id: null, username: null, gameId: null };
+                currentUserData.gameId = null; 
                 myShipPlacement = [];
                 returnToGameCard.style.display = 'none'; 
                 document.getElementById('players-list-card').style.display = 'block';
             }
             
-            // --- НОВАЯ ЛОГИКА ЗАВЕРШЕНИЯ ИГРЫ ---
+            // --- ЛОГИКА ЗАВЕРШЕНИЯ ИГРЫ (СДАЧА) ---
             async function endGameAndLobby() {
                 if (!currentUserData.gameId) {
                     alert('Нет активной игры для завершения.');
@@ -504,10 +508,12 @@
                     return;
                 }
                 
-                // 1. Обновляем статус игры в БД на 'finished' без указания победителя
+                const opponentId = currentGameState.player1_id === currentUserData.id ? currentGameState.player2_id : currentGameState.player1_id;
+
+                // 1. Обновляем статус игры в БД на 'finished' и делаем победителя - противника
                 const { error } = await supabase
                     .from('games')
-                    .update({ status: 'finished', winner_id: null }) // null, если выход по обоюдному согласию/сдаче
+                    .update({ status: 'finished', winner_id: opponentId }) 
                     .eq('id', currentUserData.gameId);
 
                 if (error) {
@@ -516,7 +522,7 @@
                     return;
                 }
                 
-                alert('Игра завершена. Вы возвращаетесь в лобби.');
+                alert('Игра завершена (вы сдались). Вы возвращаетесь в лобби.');
                 
                 // 2. Очистка каналов и состояния
                 await cleanUpSession();
@@ -612,6 +618,7 @@
                      return;
                 }
                 
+                // Профиль создается, даже если пользователь регистрируется
                 const { error: profileError } = await supabase
                     .from('profiles')
                     .upsert({ 
@@ -659,7 +666,8 @@
                             // Проверка: Если игрок уже в игре, отправляем его gameId в presence
                             const activeGame = await getActiveGame();
                             const gameId = activeGame ? activeGame.id : null;
-                            await presenceChannel.track({ user_id: userId, username: username, gameId: gameId });
+                            // Отправка данных о текущем игроке, включая gameId (null, если не в игре)
+                            await presenceChannel.track({ user_id: userId, username: username, gameId: gameId }); 
                         }
                     });
             }
@@ -718,6 +726,7 @@
                     .rpc('create_new_game')
                     .single(); 
                 
+                // **ИСПРАВЛЕНИЕ ОШИБКИ СОЗДАНИЯ ИГРЫ**
                 if (gameError) {
                     console.error('Ошибка создания игры через RPC:', gameError.message);
                     alert('Критическая ошибка создания игры: Проверьте RLS для INSERT на таблице GAMES (функция RPC)');
@@ -746,6 +755,7 @@
             }
             
             function handleIncomingChallenge(payload) {
+                // Проверяем, что это для нас и мы не в игре
                 if (payload.targetId === currentUserData.id && !currentUserData.gameId) {
                     const confirmChallenge = confirm(
                         `Игрок ${payload.challengerUsername} вызывает вас на Морской Бой! Принять?`
@@ -760,17 +770,17 @@
             async function joinGame(gameId, challengerUsername) {
                 currentUserData.gameId = gameId;
                 
-                // 1. ПОЛУЧАЕМ ID ИГРОКА 1
+                // 1. ПОЛУЧАЕМ ID ИГРОКА 1 (используем maybeSingle для обработки null)
                 const { data: initialGame, error: selectError } = await supabase
                     .from('games')
                     .select('player1_id')
                     .eq('id', gameId)
-                    .single();
+                    .maybeSingle();
 
+                // **ИСПРАВЛЕНИЕ ОШИБКИ RLS SELECT/TypeError**
                 if (selectError || initialGame === null) {
-                    console.error('Ошибка SELECT при присоединении:', selectError || 'Игра не найдена или RLS SELECT заблокирован.');
+                    console.error('Ошибка SELECT при присоединении:', selectError || 'Игра не найдена или RLS SELECT заблокирован.', selectError);
                     currentUserData.gameId = null; 
-                    // Обработка ошибки TypeError: Cannot read properties of null
                     return alert('Не удалось найти игру или получить данные (Ошибка RLS SELECT).'); 
                 }
 
@@ -788,10 +798,10 @@
                     .eq('id', gameId)
                     .select(); 
 
+                // **ИСПРАВЛЕНИЕ ОШИБКИ RLS UPDATE**
                 if (updateError || !updatedGame || updatedGame.length === 0) {
-                    console.error('Ошибка присоединения к игре (UPDATE RLS):', updateError || 'Обновление не вернуло строк.');
+                    console.error('Ошибка присоединения к игре (UPDATE RLS):', updateError || 'Обновление не вернуло строк.', updateError);
                     currentUserData.gameId = null; // Сбросить gameId, так как присоединение не удалось
-                    // Обработка ошибки RLS UPDATE
                     return alert('Не удалось присоединиться к игре. (Ошибка RLS UPDATE на games)'); 
                 }
                 
@@ -814,6 +824,7 @@
                 document.getElementById('players-list-card').style.display = 'none';
                 returnToGameCard.style.display = 'none'; // Скрываем, когда переходим в игру
 
+                // Создание досок
                 createBoard(myBoardElement, true, 'placement');
                 createBoard(opponentBoardElement, false, 'attack');
                 document.getElementById('opponent-board-wrapper').style.display = 'none';
@@ -824,6 +835,7 @@
                     myShipPlacement = myBoard.ships;
                     handleGameUpdate(gameData); // Обновляем UI до актуального состояния
                 } else {
+                    // Стандартный режим расстановки
                     document.getElementById('boards-title').textContent = '🛥️ Расстановка кораблей';
                     myBoardElement.classList.remove('disabled');
                     document.getElementById('ship-placement-instructions').style.display = 'block';
@@ -854,6 +866,7 @@
                     
                     const [r, c] = coord.split('-').map(Number);
                     
+                    // Проверка на несоприкосновение
                     if (!isAdjacentToShip(r, c, myShipPlacement)) {
                         myShipPlacement.push(coord);
                         allCells.splice(randomIndex, 1); 
@@ -877,7 +890,7 @@
             }
 
 
-            // --- ЛОГИКА РАССТАНОВКИ (СУЩЕСТВУЮЩАЯ) ---
+            // --- ЛОГИКА РАССТАНОВКИ ---
 
             function createBoard(container, isInteractive, mode) {
                 container.innerHTML = '';
@@ -1032,21 +1045,29 @@
                         document.getElementById('ship-placement-instructions').style.display = 'none';
                         gameStatusDisplay.textContent = 'Ожидание, пока соперник расставит корабли...';
                     }
-                    if (!opponentBoard) return;
+                    if (!opponentBoard) {
+                        opponentBoardWrapper.style.display = 'none';
+                        return;
+                    }
                 }
                 
+                // Если статус 'in_progress' или 'finished', показываем оба поля
                 if (gameData.status === 'in_progress' || gameData.status === 'finished') {
                     // Переход в режим боя
                     document.getElementById('boards-title').textContent = '⚔️ Поле Боя';
                     document.getElementById('ship-placement-instructions').style.display = 'none';
+                    // Отображение поля противника
                     opponentBoardWrapper.style.display = 'block';
                 }
 
+                // --- УСЛОВИЕ ПОБЕДЫ/ПОРАЖЕНИЯ ---
                 const isGameOver = checkWinCondition(opponentBoard);
                 if (isGameOver && gameData.status !== 'finished') {
+                    // Текущий игрок победил
                     currentGameState.status = 'finished';
                     const winnerId = currentUserData.id;
                     
+                    // Отправляем финальное обновление статуса
                     await supabase.from('games').update({ status: 'finished', winner_id: winnerId }).eq('id', currentGameState.id);
                     gameStatusDisplay.textContent = `🎉 ВЫ ПОБЕДИЛИ!`;
                     turnIndicator.textContent = 'Игра окончена.';
@@ -1054,13 +1075,19 @@
                     renderOpponentBoard(opponentBoard);
                     return alert('Поздравляем! Вы потопили все корабли противника!');
                 } else if (gameData.status === 'finished') {
+                    // Игра уже завершена (кто-то сдался или победил)
                     gameStatusDisplay.textContent = gameData.winner_id === currentUserData.id ? `🎉 ВЫ ПОБЕДИЛИ!` : `😭 Вы проиграли.`;
                     turnIndicator.textContent = 'Игра окончена.';
+                    // Делаем кнопки завершения неактивными
+                    endGameButton.disabled = true;
+                    // Отображаем финальное состояние
                     renderMyBoard(myBoard);
                     renderOpponentBoard(opponentBoard);
                     return;
                 }
+                // --- КОНЕЦ УСЛОВИЯ ПОБЕДЫ/ПОРАЖЕНИЯ ---
 
+                // Логика хода
                 isMyTurn = gameData.current_turn === currentUserData.id;
                 
                 myBoardWrapper.classList.toggle('turn-highlight', !isMyTurn);
@@ -1131,7 +1158,9 @@
 
                 if (error) {
                     console.error('Ошибка при выстреле:', error);
+                    // RLS-политика UPDATE с проверкой current_turn
                     alert('Ошибка сервера при выстреле. Проверьте RLS UPDATE: возможно, выстрел разрешен только current_turn.');
+                    opponentBoardElement.classList.remove('disabled'); // Разблокируем в случае ошибки
                 }
             }
             
@@ -1148,7 +1177,7 @@
                     
                     if (myBoardData && myBoardData.hits.includes(coord)) {
                         cell.classList.add('hit');
-                        cell.classList.remove('ship');
+                        cell.classList.remove('ship'); // Убираем ship, если попали
                     }
                     
                     if (myBoardData && myBoardData.misses.includes(coord)) {
@@ -1160,11 +1189,19 @@
             function renderOpponentBoard(opponentBoardData) {
                 const board = opponentBoardElement;
                 
+                // Деактивируем поле атаки, если не наш ход или игра не в процессе
                 board.classList.toggle('disabled', !isMyTurn || currentGameState.status !== 'in_progress');
                 
                 for (const cell of board.querySelectorAll('.cell')) {
                     const coord = cell.dataset.coord;
                     cell.classList.remove('hit', 'miss');
+                    cell.removeEventListener('click', handleAttackClick); // Убираем старые
+                    
+                    // Поле противника интерактивно только если наш ход
+                    if(isMyTurn && currentGameState.status === 'in_progress') {
+                        cell.addEventListener('click', handleAttackClick);
+                    }
+
 
                     if (opponentBoardData && opponentBoardData.hits.includes(coord)) {
                         cell.classList.add('hit');
@@ -1173,6 +1210,8 @@
                     if (opponentBoardData && opponentBoardData.misses.includes(coord)) {
                         cell.classList.add('miss');
                     }
+                    
+                    // Важно: на поле противника никогда не показываем корабли
                 }
             }
             
@@ -1180,6 +1219,7 @@
 
             async function getUsernameById(userId) {
                 if (!userId) return 'Ожидание...';
+                // Здесь RLS должен разрешать чтение профилей всем, но фильтровать по id
                 const { data } = await supabase.from('profiles').select('username').eq('id', userId).maybeSingle();
                 return data ? data.username : 'Ожидание...';
             }
